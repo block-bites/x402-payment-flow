@@ -9,6 +9,20 @@ import {
 } from '../config/x402-config'
 
 export type PaymentStatus = 'idle' | 'connecting' | 'requesting' | 'signing' | 'settling' | 'success' | 'error'
+export type PlanType = '24h' | '7d'
+
+export interface PlanPricing {
+  '24h': {
+    price: number
+    priceFormatted: string
+    amount: string // raw amount in smallest unit
+  }
+  '7d': {
+    price: number
+    priceFormatted: string
+    amount: string
+  }
+}
 
 export interface UseX402PaymentResult {
   paymentStatus: PaymentStatus
@@ -17,11 +31,15 @@ export interface UseX402PaymentResult {
   mediaUrl: string | null
   transactionHash: string | null
   error: string | null
+  pricing: PlanPricing | null
+  selectedPlan: PlanType
+  entitlementId: string | null
   connectWallet: () => Promise<void>
   disconnectWallet: () => void
-  requestPayment: (mediaType: 'video' | 'image') => Promise<PaymentRequirements | null>
-  executePayment: () => Promise<boolean>
+  requestPayment: (mediaType: 'video' | 'image', sessionHeader?: Record<string, string>) => Promise<PaymentRequirements | null>
+  executePayment: (sessionHeader?: Record<string, string>) => Promise<boolean>
   resetPayment: () => void
+  setSelectedPlan: (plan: PlanType) => void
 }
 
 // EIP-712 types for TransferWithAuthorization (EIP-3009)
@@ -56,18 +74,29 @@ function getChainIdFromNetwork(network: string): number {
   return networkMap[network] || 84532
 }
 
+// Convert price to raw amount (6 decimals for USDC)
+function priceToAmount(price: number): string {
+  return String(Math.round(price * 1_000_000))
+}
+
 export const useX402Payment = (): UseX402PaymentResult => {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('idle')
   const [paymentRequirements, setPaymentRequirements] = useState<PaymentRequirements | null>(null)
   const [currentMediaType, setCurrentMediaType] = useState<'video' | 'image' | null>(null)
   const [resourceInfo, setResourceInfo] = useState<{ description: string; mimeType: string } | null>(null)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
+  const [pricing, setPricing] = useState<PlanPricing | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<PlanType>('24h')
+  const [entitlementId, setEntitlementId] = useState<string | null>(null)
   
   // Check if user manually disconnected (don't auto-connect in that case)
   const wasManuallyDisconnected = sessionStorage.getItem('x402_disconnected') === 'true'
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [transactionHash, setTransactionHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Store session header for use in executePayment
+  const [currentSessionHeader, setCurrentSessionHeader] = useState<Record<string, string>>({})
 
   // Auto-connect on mount if user didn't manually disconnect
   useEffect(() => {
@@ -146,28 +175,56 @@ export const useX402Payment = (): UseX402PaymentResult => {
     setTransactionHash(null)
     setPaymentStatus('idle')
     setError(null)
+    setPricing(null)
+    setEntitlementId(null)
     // Mark as manually disconnected so we don't auto-connect on refresh
     sessionStorage.setItem('x402_disconnected', 'true')
   }, [])
 
   // Request payment (get 402 response from backend)
-  const requestPayment = useCallback(async (mediaType: 'video' | 'image'): Promise<PaymentRequirements | null> => {
+  const requestPayment = useCallback(async (
+    mediaType: 'video' | 'image',
+    sessionHeader: Record<string, string> = {}
+  ): Promise<PaymentRequirements | null> => {
     setPaymentStatus('requesting')
     setError(null)
     setCurrentMediaType(mediaType)
+    setCurrentSessionHeader(sessionHeader)
 
     try {
       const mediaId = MEDIA_IDS[mediaType]
       const response = await fetch(`${API_URL}/media/${mediaId}/access`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        headers: { 
+          'Content-Type': 'application/json',
+          ...sessionHeader
+        },
+        body: JSON.stringify({
+          planType: selectedPlan
+        })
       })
 
       if (response.status === 402) {
         const data: PaymentRequiredResponse = await response.json()
         
         console.log('x402 Payment Required (HTTP 402):', data)
+        
+        // Extract pricing from response
+        const pricingData = (data as any).pricing
+        if (pricingData) {
+          setPricing({
+            '24h': {
+              price: pricingData['24h']?.price || 0.01,
+              priceFormatted: pricingData['24h']?.priceFormatted || '$0.01',
+              amount: priceToAmount(pricingData['24h']?.price || 0.01)
+            },
+            '7d': {
+              price: pricingData['7d']?.price || 0.05,
+              priceFormatted: pricingData['7d']?.priceFormatted || '$0.05',
+              amount: priceToAmount(pricingData['7d']?.price || 0.05)
+            }
+          })
+        }
         
         const requirements = data.paymentRequired.accepts[0]
         setPaymentRequirements(requirements)
@@ -190,14 +247,19 @@ export const useX402Payment = (): UseX402PaymentResult => {
       setPaymentStatus('error')
       return null
     }
-  }, [])
+  }, [selectedPlan])
 
   // Execute payment (sign EIP-3009 authorization and submit to backend)
-  const executePayment = useCallback(async (): Promise<boolean> => {
+  const executePayment = useCallback(async (
+    sessionHeader: Record<string, string> = {}
+  ): Promise<boolean> => {
     if (!window.ethereum || !walletAddress || !paymentRequirements || !currentMediaType || !resourceInfo) {
       setError('Missing wallet or payment requirements')
       return false
     }
+
+    // Use provided session header or stored one
+    const headers = Object.keys(sessionHeader).length > 0 ? sessionHeader : currentSessionHeader
 
     try {
       setPaymentStatus('signing')
@@ -229,6 +291,9 @@ export const useX402Payment = (): UseX402PaymentResult => {
         }
       }
 
+      // Get the correct amount for selected plan
+      const paymentAmount = pricing?.[selectedPlan]?.amount || paymentRequirements.amount
+
       // Build EIP-712 authorization data
       const now = Math.floor(Date.now() / 1000)
       const validBefore = now + paymentRequirements.maxTimeoutSeconds
@@ -246,7 +311,7 @@ export const useX402Payment = (): UseX402PaymentResult => {
       const message = {
         from: walletAddress,
         to: paymentRequirements.payTo,
-        value: paymentRequirements.amount, // string, will be parsed as uint256
+        value: paymentAmount, // Use plan-specific amount
         validAfter: 0, // number for EIP-712
         validBefore: validBefore, // number for EIP-712
         nonce: nonce, // bytes32
@@ -281,16 +346,22 @@ export const useX402Payment = (): UseX402PaymentResult => {
       const authorization = {
         from: walletAddress,
         to: paymentRequirements.payTo,
-        value: paymentRequirements.amount,
+        value: paymentAmount,
         validAfter: '0',
         validBefore: String(validBefore),
         nonce: nonce,
       }
 
+      // Update requirements with correct amount for payload
+      const updatedRequirements = {
+        ...paymentRequirements,
+        amount: paymentAmount
+      }
+
       const signedPayload: SignedPaymentPayload = {
         x402Version: 2,
         resource: resourceInfo,
-        accepted: paymentRequirements,
+        accepted: updatedRequirements,
         payload: {
           signature: signature,
           authorization: authorization,
@@ -303,8 +374,12 @@ export const useX402Payment = (): UseX402PaymentResult => {
       const mediaId = MEDIA_IDS[currentMediaType]
       const response = await fetch(`${API_URL}/media/${mediaId}/access`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...headers
+        },
         body: JSON.stringify({
+          planType: selectedPlan,
           message: {
             parts: [{ kind: 'text', text: `Request access to ${mediaId}` }],
             metadata: {
@@ -321,6 +396,7 @@ export const useX402Payment = (): UseX402PaymentResult => {
         console.log('x402 Payment Success:', data)
         setMediaUrl(data.mediaUrl)
         setTransactionHash(data.settlement?.transaction || null)
+        setEntitlementId(data.entitlement?.id || null)
         setPaymentStatus('success')
         return true
       } else {
@@ -332,7 +408,7 @@ export const useX402Payment = (): UseX402PaymentResult => {
       setPaymentStatus('error')
       return false
     }
-  }, [walletAddress, paymentRequirements, currentMediaType, resourceInfo])
+  }, [walletAddress, paymentRequirements, currentMediaType, resourceInfo, pricing, selectedPlan, currentSessionHeader])
 
   // Reset payment state
   const resetPayment = useCallback(() => {
@@ -343,6 +419,8 @@ export const useX402Payment = (): UseX402PaymentResult => {
     setTransactionHash(null)
     setPaymentStatus('idle')
     setError(null)
+    setEntitlementId(null)
+    // Keep pricing and selectedPlan for next purchase
   }, [])
 
   return {
@@ -352,10 +430,14 @@ export const useX402Payment = (): UseX402PaymentResult => {
     mediaUrl,
     transactionHash,
     error,
+    pricing,
+    selectedPlan,
+    entitlementId,
     connectWallet,
     disconnectWallet,
     requestPayment,
     executePayment,
-    resetPayment
+    resetPayment,
+    setSelectedPlan
   }
 }

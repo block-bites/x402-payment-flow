@@ -1,5 +1,6 @@
 import { PaymentRequirements, formatUsdcAmount } from '../config/x402-config'
-import { PaymentStatus } from '../hooks/use-x402-payment'
+import { PaymentStatus, PlanType, PlanPricing } from '../hooks/use-x402-payment'
+import PlanSelector from './plan-selector'
 import './payment-modal.css'
 
 interface PaymentModalProps {
@@ -12,6 +13,10 @@ interface PaymentModalProps {
   onPayment: () => void
   onCancel: () => void
   onConnectWallet: () => void
+  // New props for plan selection
+  pricing?: PlanPricing | null
+  selectedPlan?: PlanType
+  onPlanSelect?: (plan: PlanType) => void
 }
 
 function PaymentModal({
@@ -23,7 +28,10 @@ function PaymentModal({
   error,
   onPayment,
   onCancel,
-  onConnectWallet
+  onConnectWallet,
+  pricing,
+  selectedPlan = '24h',
+  onPlanSelect
 }: PaymentModalProps) {
   if (!show) return null
 
@@ -68,6 +76,23 @@ function PaymentModal({
     }
   }
 
+  // Get display amount based on selected plan
+  const getDisplayAmount = (): string => {
+    if (pricing && pricing[selectedPlan]) {
+      return pricing[selectedPlan].priceFormatted
+    }
+    if (paymentRequirements) {
+      return formatUsdcAmount(paymentRequirements.amount)
+    }
+    return '$0.00'
+  }
+
+  // Default pricing if not provided
+  const displayPricing: PlanPricing = pricing || {
+    '24h': { price: 0.01, priceFormatted: '$0.01', amount: '10000' },
+    '7d': { price: 0.05, priceFormatted: '$0.05', amount: '50000' }
+  }
+
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal-container" onClick={e => e.stopPropagation()}>
@@ -88,13 +113,26 @@ function PaymentModal({
         </div>
 
         {/* Amount Display */}
-        {paymentRequirements && (
-          <div className={`amount-display ${isSuccess ? 'success' : isError ? 'error' : ''}`}>
-            <div className="amount-value">
-              {formatUsdcAmount(paymentRequirements.amount)}
-            </div>
-            <div className="amount-currency">USDC</div>
+        <div className={`amount-display ${isSuccess ? 'success' : isError ? 'error' : ''}`}>
+          <div className="amount-value">
+            {getDisplayAmount()}
           </div>
+          <div className="amount-currency">USDC</div>
+          {!isProcessing && !isSuccess && !isError && (
+            <div className="plan-duration-badge">
+              {selectedPlan === '24h' ? '24 Hour Access' : '7 Day Access'}
+            </div>
+          )}
+        </div>
+
+        {/* Plan Selector - show only when not processing */}
+        {!isProcessing && !isSuccess && !isError && walletAddress && onPlanSelect && (
+          <PlanSelector
+            pricing={displayPricing}
+            selectedPlan={selectedPlan}
+            onPlanSelect={onPlanSelect}
+            disabled={isProcessing}
+          />
         )}
 
         {/* Progress Steps */}
@@ -208,7 +246,7 @@ function PaymentModal({
               </div>
               <div className="status-text">
                 <span className="status-title">Payment successful!</span>
-                <span className="status-desc">Your content has been unlocked</span>
+                <span className="status-desc">Your {selectedPlan === '24h' ? '24 hour' : '7 day'} access has been activated</span>
               </div>
             </div>
           )}
@@ -290,7 +328,7 @@ function PaymentModal({
                   <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
                   <line x1="1" y1="10" x2="23" y2="10"></line>
                 </svg>
-                Pay Now
+                Pay {displayPricing[selectedPlan].priceFormatted}
               </button>
             </>
           )}

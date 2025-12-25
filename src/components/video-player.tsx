@@ -9,7 +9,6 @@ interface VideoPlayerProps {
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ isLocked, onPaymentRequest, mediaUrl, serverOnline }) => {
-  const [isPlaying, setIsPlaying] = useState(false)
   const [hasError, setHasError] = useState(false)
 
   const handleClick = (): void => {
@@ -38,8 +37,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ isLocked, onPaymentRequest, m
       ) : (
         <video
           controls={!isLocked}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
           onError={() => setHasError(true)}
           onLoadedData={() => setHasError(false)}
           className={`video-player ${isLocked ? 'blurred' : ''}`}

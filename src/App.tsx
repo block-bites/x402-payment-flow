@@ -1,70 +1,52 @@
 import { useState, useEffect } from 'react'
-import VideoPlayer from './components/video-player'
-import ImageViewer from './components/image-viewer'
+import SecureVideoPlayer from './components/secure-video-player'
+import SecureImageViewer from './components/secure-image-viewer'
 import PaymentModal from './components/payment-modal'
 import WalletConnect from './components/wallet-connect'
-import { useX402Payment } from './hooks/use-x402-payment'
-import { formatUsdcAmount, API_URL } from './config/x402-config'
+import { planSelectorStyles } from './components/plan-selector'
+import { useX402Payment, PlanType } from './hooks/use-x402-payment'
+import { useWalletSession } from './hooks/use-wallet-session'
+import { API_URL } from './config/x402-config'
 import './App.css'
-
-interface UnlockedContent {
-  video: string | null  // mediaUrl or null
-  image: string | null  // mediaUrl or null
-}
-
-// Load unlocked content from sessionStorage (per wallet address)
-const loadUnlockedContent = (walletAddress: string | null): UnlockedContent => {
-  if (!walletAddress) return { video: null, image: null }
-  
-  try {
-    const key = `x402_unlocked_${walletAddress.toLowerCase()}`
-    const saved = sessionStorage.getItem(key)
-    if (saved) {
-      return JSON.parse(saved)
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return { video: null, image: null }
-}
-
-// Save unlocked content to sessionStorage (per wallet address)
-const saveUnlockedContent = (walletAddress: string | null, content: UnlockedContent) => {
-  if (!walletAddress) return
-  
-  const key = `x402_unlocked_${walletAddress.toLowerCase()}`
-  sessionStorage.setItem(key, JSON.stringify(content))
-}
 
 function App() {
   const [showPaymentModal, setShowPaymentModal] = useState(false)
-  const [currentMediaType, setCurrentMediaType] = useState<'video' | 'image' | null>(null)
-  const [unlockedContent, setUnlockedContent] = useState<UnlockedContent>({ video: null, image: null })
-  const [prices, setPrices] = useState<{ video: string; image: string }>({ video: '10000', image: '10000' })
+  const [_currentMediaType, setCurrentMediaType] = useState<'video' | 'image' | null>(null)
   const [serverStatus, setServerStatus] = useState<{
     online: boolean | null
     network: string | null
   }>({ online: null, network: null })
   const [mediaKey, setMediaKey] = useState(0) // Key to force re-render media components
 
+  // Wallet session hook for authentication
+  const {
+    session,
+    isAuthenticated,
+    isAuthenticating,
+    entitlements,
+    authenticate,
+    logout: sessionLogout,
+    fetchEntitlements,
+    hasAccessTo,
+    getSessionHeader
+  } = useWalletSession()
+
+  // Payment hook
   const {
     paymentStatus,
     paymentRequirements,
     walletAddress,
-    mediaUrl,
     transactionHash,
     error,
+    pricing,
+    selectedPlan,
     connectWallet,
     disconnectWallet,
     requestPayment,
     executePayment,
-    resetPayment
+    resetPayment,
+    setSelectedPlan
   } = useX402Payment()
-
-  // Load unlocked content when wallet changes
-  useEffect(() => {
-    setUnlockedContent(loadUnlockedContent(walletAddress))
-  }, [walletAddress])
 
   // Check server status
   useEffect(() => {
@@ -102,41 +84,64 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
-  // Handle successful payment - save unlocked content but don't auto-close modal
+  // Auto-authenticate when wallet connects
   useEffect(() => {
-    if (paymentStatus === 'success' && currentMediaType && mediaUrl) {
-      setUnlockedContent(prev => {
-        const newState = { ...prev, [currentMediaType]: mediaUrl }
-        saveUnlockedContent(walletAddress, newState)
-        return newState
-      })
-      // Modal stays open - user closes it manually with X or Continue button
+    if (walletAddress && !isAuthenticated && !isAuthenticating) {
+      // Check if session exists for this wallet
+      if (!session || session.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+        console.log('[App] Wallet connected, authenticating...')
+        authenticate(walletAddress)
+      }
     }
-  }, [paymentStatus, currentMediaType, mediaUrl, walletAddress])
+  }, [walletAddress, isAuthenticated, isAuthenticating, session, authenticate])
 
-  // Update prices when payment requirements come in
+  // Refresh entitlements after successful payment
   useEffect(() => {
-    if (paymentRequirements && currentMediaType) {
-      setPrices(prev => ({
-        ...prev,
-        [currentMediaType]: paymentRequirements.amount
-      }))
+    if (paymentStatus === 'success') {
+      console.log('[App] Payment success, refreshing entitlements...')
+      fetchEntitlements()
+      // Force re-render media components to fetch new stream tokens
+      setMediaKey(prev => prev + 1)
     }
-  }, [paymentRequirements, currentMediaType])
+  }, [paymentStatus, fetchEntitlements])
+
+  // Handle wallet connect with authentication
+  const handleConnect = async () => {
+    await connectWallet()
+  }
+
+  // Handle disconnect - clear both wallet and session
+  const handleDisconnect = () => {
+    sessionLogout()
+    disconnectWallet()
+  }
+
+  // Check if user has access to media
+  const hasVideoAccess = hasAccessTo('video')
+  const hasImageAccess = hasAccessTo('image')
 
   const handlePaymentRequest = async (mediaType: 'video' | 'image') => {
     setCurrentMediaType(mediaType)
     
     if (!walletAddress) {
-      await connectWallet()
+      await handleConnect()
+      return
     }
 
-    await requestPayment(mediaType)
+    // If not authenticated, authenticate first
+    if (!isAuthenticated) {
+      const success = await authenticate(walletAddress)
+      if (!success) {
+        return
+      }
+    }
+
+    await requestPayment(mediaType, getSessionHeader())
     setShowPaymentModal(true)
   }
 
   const handlePaymentExecute = async () => {
-    await executePayment()
+    await executePayment(getSessionHeader())
   }
 
   const handlePaymentCancel = () => {
@@ -145,21 +150,40 @@ function App() {
     resetPayment()
   }
 
+  const handlePlanSelect = (plan: PlanType) => {
+    setSelectedPlan(plan)
+  }
+
+  // Get display price based on selected plan
+  const getDisplayPrice = () => {
+    if (pricing) {
+      return pricing[selectedPlan].priceFormatted
+    }
+    return '$0.01'
+  }
+
   return (
     <div className="app">
+      {/* Inject plan selector styles */}
+      <style>{planSelectorStyles}</style>
+      
       <header className="app-header">
         <div className="header-top">
           <h1>x402 Payment Demo</h1>
           <WalletConnect
             walletAddress={walletAddress}
-            onConnect={connectWallet}
-            onDisconnect={disconnectWallet}
-            isConnecting={paymentStatus === 'connecting'}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+            isConnecting={paymentStatus === 'connecting' || isAuthenticating}
           />
         </div>
         <p className="description">
           Demo x402 protocol with USDC payments on Base Sepolia.
-          Click on locked media to pay {formatUsdcAmount(prices.video)} USDC.
+          {isAuthenticated ? (
+            <> Authenticated • {entitlements.length} active entitlement{entitlements.length !== 1 ? 's' : ''}</>
+          ) : (
+            <> Connect wallet to unlock premium content.</>
+          )}
         </p>
         <div className="status-badges">
           <div className="status-badge">
@@ -172,34 +196,74 @@ function App() {
                   : serverStatus.network || 'Connected'
             ) : 'Server Offline'}
           </div>
+          {isAuthenticated && (
+            <div className="status-badge authenticated">
+              <span className="status-dot online"></span>
+              Session Active
+            </div>
+          )}
         </div>
       </header>
 
       <main className="demo-container">
         <div className="media-section">
           <h2>Video</h2>
-          <p className="price-tag">{formatUsdcAmount(prices.video)} USDC</p>
-          <VideoPlayer
+          <p className="price-tag">
+            {hasVideoAccess ? (
+              <span className="access-badge">Access Granted</span>
+            ) : (
+              <>{getDisplayPrice()} USDC</>
+            )}
+          </p>
+          <SecureVideoPlayer
             key={`video-${mediaKey}`}
-            isLocked={!unlockedContent.video}
+            assetId="video"
+            isLocked={!hasVideoAccess}
+            hasAccess={hasVideoAccess}
             onPaymentRequest={() => handlePaymentRequest('video')}
-            mediaUrl={unlockedContent.video}
             serverOnline={serverStatus.online}
+            getSessionHeader={getSessionHeader}
           />
         </div>
 
         <div className="media-section">
           <h2>Image</h2>
-          <p className="price-tag">{formatUsdcAmount(prices.image)} USDC</p>
-          <ImageViewer
+          <p className="price-tag">
+            {hasImageAccess ? (
+              <span className="access-badge">Access Granted</span>
+            ) : (
+              <>{getDisplayPrice()} USDC</>
+            )}
+          </p>
+          <SecureImageViewer
             key={`image-${mediaKey}`}
-            isLocked={!unlockedContent.image}
+            assetId="image"
+            isLocked={!hasImageAccess}
+            hasAccess={hasImageAccess}
             onPaymentRequest={() => handlePaymentRequest('image')}
-            mediaUrl={unlockedContent.image}
             serverOnline={serverStatus.online}
+            getSessionHeader={getSessionHeader}
           />
         </div>
       </main>
+
+      {/* Entitlements list */}
+      {isAuthenticated && entitlements.length > 0 && (
+        <section className="entitlements-section">
+          <h3>Your Purchases</h3>
+          <div className="entitlements-list">
+            {entitlements.map((ent) => (
+              <div key={ent.id} className="entitlement-item">
+                <span className="entitlement-asset">{ent.assetId}</span>
+                <span className="entitlement-plan">{ent.planType}</span>
+                <span className="entitlement-expires">
+                  Expires: {new Date(ent.expiresAt).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <PaymentModal
         show={showPaymentModal}
@@ -210,7 +274,10 @@ function App() {
         error={error}
         onPayment={handlePaymentExecute}
         onCancel={handlePaymentCancel}
-        onConnectWallet={connectWallet}
+        onConnectWallet={handleConnect}
+        pricing={pricing}
+        selectedPlan={selectedPlan}
+        onPlanSelect={handlePlanSelect}
       />
     </div>
   )
