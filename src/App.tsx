@@ -164,23 +164,6 @@ function App() {
     setSelectedPlan(plan)
   }
 
-  // Get display price based on selected plan
-  const getDisplayPrice = (mediaId: string) => {
-    const media = mediaList.find(m => m.id === mediaId)
-    if (media?.pricing) {
-      return media.pricing[selectedPlan].priceFormatted
-    }
-    if (pricing) {
-      return pricing[selectedPlan].priceFormatted
-    }
-    return selectedPlan === '24h' ? '$0.01' : '$0.02'
-  }
-  
-  // Get plan label for display
-  const getPlanLabel = () => {
-    return selectedPlan === '24h' ? '24h' : '7 days'
-  }
-
   return (
     <div className="app">
       {/* Inject plan selector styles */}
@@ -227,13 +210,11 @@ function App() {
       <main className="demo-container">
         <div className="media-section">
           <h2>Video</h2>
-          <p className="price-tag">
-            {hasVideoAccess ? (
+          {hasVideoAccess && (
+            <p className="price-tag">
               <span className="access-badge">Access Granted</span>
-            ) : (
-              <>{getDisplayPrice('video')} <span className="plan-label">/ {getPlanLabel()}</span></>
-            )}
-          </p>
+            </p>
+          )}
           <SecureVideoPlayer
             key={`video-${mediaKey}`}
             assetId="video"
@@ -248,13 +229,11 @@ function App() {
 
         <div className="media-section">
           <h2>Image</h2>
-          <p className="price-tag">
-            {hasImageAccess ? (
+          {hasImageAccess && (
+            <p className="price-tag">
               <span className="access-badge">Access Granted</span>
-            ) : (
-              <>{getDisplayPrice('image')} <span className="plan-label">/ {getPlanLabel()}</span></>
-            )}
-          </p>
+            </p>
+          )}
           <SecureImageViewer
             key={`image-${mediaKey}`}
             assetId="image"
