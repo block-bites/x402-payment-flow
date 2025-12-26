@@ -149,7 +149,7 @@ const SecureVideoPlayer: React.FC<SecureVideoPlayerProps> = ({
             <div className="paywall-text">Premium Content</div>
             <button className="paywall-button">
               <span className="x402-badge">402</span>
-              {hasAccess ? 'Oglądaj' : 'Kup'}
+              {hasAccess ? 'Watch' : 'Buy'}
             </button>
           </div>
         </div>
