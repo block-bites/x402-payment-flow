@@ -9,6 +9,7 @@ interface SecureImageViewerProps {
   onPaymentRequest: () => void
   serverOnline?: boolean | null
   getSessionHeader: () => Record<string, string>
+  previewUrl?: string // Direct Supabase URL for preview
 }
 
 const SecureImageViewer: React.FC<SecureImageViewerProps> = ({
@@ -17,16 +18,34 @@ const SecureImageViewer: React.FC<SecureImageViewerProps> = ({
   hasAccess,
   onPaymentRequest,
   serverOnline,
-  getSessionHeader
+  getSessionHeader,
+  previewUrl: externalPreviewUrl
 }) => {
   const [hasError, setHasError] = useState(false)
   const [isLoadingStream, setIsLoadingStream] = useState(false)
+  const [fetchedPreviewUrl, setFetchedPreviewUrl] = useState<string | null>(null)
   
   const { 
     streamUrl, 
     fetchStreamToken, 
     clearToken 
   } = useStreamToken(getSessionHeader)
+
+  // Fetch preview URL from API if not provided
+  useEffect(() => {
+    if (!externalPreviewUrl && isLocked) {
+      fetch(`${API_URL}/media/preview/${assetId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.previewUrl) {
+            setFetchedPreviewUrl(data.previewUrl)
+          }
+        })
+        .catch(err => {
+          console.error('[SecureImage] Failed to fetch preview URL:', err)
+        })
+    }
+  }, [assetId, externalPreviewUrl, isLocked])
 
   // Fetch stream token when user has access
   useEffect(() => {
@@ -49,8 +68,8 @@ const SecureImageViewer: React.FC<SecureImageViewerProps> = ({
     }
   }
 
-  // Preview URL for locked content
-  const previewUrl = `${API_URL}/media/preview/${assetId}`
+  // Preview URL - use external, fetched, or fallback
+  const previewUrl = externalPreviewUrl || fetchedPreviewUrl || `${API_URL}/media/preview/${assetId}`
   
   // Use stream URL when unlocked and available, otherwise preview
   const imageSrc = !isLocked && streamUrl ? streamUrl : previewUrl

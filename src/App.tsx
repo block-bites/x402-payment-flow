@@ -9,6 +9,15 @@ import { useWalletSession } from './hooks/use-wallet-session'
 import { API_URL } from './config/x402-config'
 import './App.css'
 
+interface MediaInfo {
+  id: string
+  previewUrl: string
+  pricing: {
+    '24h': { price: number; priceFormatted: string }
+    '7d': { price: number; priceFormatted: string }
+  }
+}
+
 function App() {
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [_currentMediaType, setCurrentMediaType] = useState<'video' | 'image' | null>(null)
@@ -17,6 +26,7 @@ function App() {
     network: string | null
   }>({ online: null, network: null })
   const [mediaKey, setMediaKey] = useState(0) // Key to force re-render media components
+  const [mediaList, setMediaList] = useState<MediaInfo[]>([]) // Media list from API
 
   // Wallet session hook for authentication
   const {
@@ -48,6 +58,27 @@ function App() {
     setSelectedPlan
   } = useX402Payment()
 
+  // Fetch media list from API
+  const fetchMediaList = async () => {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const sessionHeader = getSessionHeader()
+      if (sessionHeader['X-Wallet-Session']) {
+        headers['X-Wallet-Session'] = sessionHeader['X-Wallet-Session']
+      }
+      
+      const response = await fetch(`${API_URL}/media`, { headers })
+      if (response.ok) {
+        const data = await response.json()
+        if (data.media) {
+          setMediaList(data.media)
+        }
+      }
+    } catch (err) {
+      console.error('[App] Failed to fetch media list:', err)
+    }
+  }
+
   // Check server status
   useEffect(() => {
     let wasOffline = serverStatus.online === false || serverStatus.online === null
@@ -65,6 +96,7 @@ function App() {
           // If server just came online, refresh media components
           if (wasOffline) {
             setMediaKey(prev => prev + 1)
+            fetchMediaList()
           }
           
           setServerStatus({ online: true, network })
@@ -80,6 +112,7 @@ function App() {
     }
 
     checkServer()
+    fetchMediaList()
     const interval = setInterval(checkServer, 5000)
     return () => clearInterval(interval)
   }, [])
@@ -223,6 +256,7 @@ function App() {
             onPaymentRequest={() => handlePaymentRequest('video')}
             serverOnline={serverStatus.online}
             getSessionHeader={getSessionHeader}
+            previewUrl={mediaList.find(m => m.id === 'video')?.previewUrl}
           />
         </div>
 
@@ -243,6 +277,7 @@ function App() {
             onPaymentRequest={() => handlePaymentRequest('image')}
             serverOnline={serverStatus.online}
             getSessionHeader={getSessionHeader}
+            previewUrl={mediaList.find(m => m.id === 'image')?.previewUrl}
           />
         </div>
       </main>
