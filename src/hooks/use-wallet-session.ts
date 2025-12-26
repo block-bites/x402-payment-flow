@@ -181,13 +181,16 @@ export const useWalletSession = (): UseWalletSessionResult => {
     return fetchEntitlementsInternal(session.sessionToken)
   }, [session])
 
-  // Check if user has access to asset
+  // Check if user has access to asset - requires authentication
   const hasAccessTo = useCallback((assetId: string): boolean => {
+    // Must be authenticated to have access
+    if (!session) return false
+    
     return entitlements.some(e => 
       e.assetId === assetId && 
       new Date(e.expiresAt) > new Date()
     )
-  }, [entitlements])
+  }, [session, entitlements])
 
   // Refresh session (check if still valid)
   const refreshSession = useCallback(async (): Promise<boolean> => {

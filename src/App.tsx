@@ -30,10 +30,8 @@ function App() {
 
   // Wallet session hook for authentication
   const {
-    session,
     isAuthenticated,
     isAuthenticating,
-    entitlements,
     authenticate,
     logout: sessionLogout,
     fetchEntitlements,
@@ -110,13 +108,10 @@ function App() {
   // Auto-authenticate when wallet connects
   useEffect(() => {
     if (walletAddress && !isAuthenticated && !isAuthenticating) {
-      // Check if session exists for this wallet
-      if (!session || session.walletAddress.toLowerCase() !== walletAddress.toLowerCase()) {
-        console.log('[App] Wallet connected, authenticating...')
-        authenticate(walletAddress)
-      }
+      console.log('[App] Wallet connected, authenticating...')
+      authenticate(walletAddress)
     }
-  }, [walletAddress, isAuthenticated, isAuthenticating, session, authenticate])
+  }, [walletAddress, isAuthenticated, isAuthenticating, authenticate])
 
   // Refresh entitlements after successful payment
   useEffect(() => {
@@ -212,7 +207,7 @@ function App() {
         <p className="description">
           Demo x402 protocol with USDC payments on Base Sepolia.
           {isAuthenticated ? (
-            <> Authenticated • {entitlements.length} active entitlement{entitlements.length !== 1 ? 's' : ''}</>
+            <> Authenticated</>
           ) : (
             <> Connect wallet to unlock premium content.</>
           )}
@@ -280,24 +275,6 @@ function App() {
           />
         </div>
       </main>
-
-      {/* Entitlements list */}
-      {isAuthenticated && entitlements.length > 0 && (
-        <section className="entitlements-section">
-          <h3>Your Purchases</h3>
-          <div className="entitlements-list">
-            {entitlements.map((ent) => (
-              <div key={ent.id} className="entitlement-item">
-                <span className="entitlement-asset">{ent.assetId}</span>
-                <span className="entitlement-plan">{ent.planType}</span>
-                <span className="entitlement-expires">
-                  Expires: {new Date(ent.expiresAt).toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       <PaymentModal
         show={showPaymentModal}
