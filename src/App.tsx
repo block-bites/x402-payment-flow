@@ -187,12 +187,18 @@ function App() {
     setSelectedPlan(plan)
   }
 
-  // Get display price based on selected plan
-  const getDisplayPrice = () => {
-    if (pricing) {
-      return pricing[selectedPlan].priceFormatted
+  // Get display price - show range "from $X" based on media pricing
+  const getDisplayPrice = (mediaId: string) => {
+    const media = mediaList.find(m => m.id === mediaId)
+    if (media?.pricing) {
+      const minPrice = Math.min(media.pricing['24h'].price, media.pricing['7d'].price)
+      return `from $${minPrice.toFixed(2)}`
     }
-    return '$0.01'
+    if (pricing) {
+      const minPrice = Math.min(pricing['24h'].price, pricing['7d'].price)
+      return `from $${minPrice.toFixed(2)}`
+    }
+    return 'from $0.01'
   }
 
   return (
@@ -245,7 +251,7 @@ function App() {
             {hasVideoAccess ? (
               <span className="access-badge">Access Granted</span>
             ) : (
-              <>{getDisplayPrice()} USDC</>
+              <>{getDisplayPrice('video')} USDC</>
             )}
           </p>
           <SecureVideoPlayer
@@ -266,7 +272,7 @@ function App() {
             {hasImageAccess ? (
               <span className="access-badge">Access Granted</span>
             ) : (
-              <>{getDisplayPrice()} USDC</>
+              <>{getDisplayPrice('image')} USDC</>
             )}
           </p>
           <SecureImageViewer
