@@ -1,16 +1,16 @@
 import { useState, useCallback, useRef } from 'react'
 import { API_URL } from '../config/x402-config'
 
-export interface StreamToken {
-  token: string
-  expiresIn: number // seconds
+export interface SignedUrlData {
+  url: string // Direct Supabase signed URL
+  expiresIn: number // seconds (default 300 = 5 min)
   mediaType: 'video' | 'image'
   mimeType: string
   fetchedAt: number // timestamp
 }
 
 export interface UseStreamTokenResult {
-  streamToken: StreamToken | null
+  streamToken: SignedUrlData | null
   streamUrl: string | null
   isLoading: boolean
   error: string | null
@@ -21,37 +21,35 @@ export interface UseStreamTokenResult {
   isTokenValid: () => boolean
 }
 
-// Token is valid if it has more than 10 seconds left
-const TOKEN_VALIDITY_MARGIN = 10 * 1000 // 10 seconds in ms
+// URL is valid if it has more than 30 seconds left (signed URLs last 5 min)
+const URL_VALIDITY_MARGIN = 30 * 1000 // 30 seconds in ms
 
 export const useStreamToken = (
   getSessionHeader: () => Record<string, string>
 ): UseStreamTokenResult => {
-  const [streamToken, setStreamToken] = useState<StreamToken | null>(null)
+  const [streamToken, setStreamToken] = useState<SignedUrlData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const currentAssetId = useRef<string | null>(null)
   const isFetching = useRef(false) // Prevent concurrent fetches
 
-  // Check if current token is still valid
+  // Check if current signed URL is still valid
   const isTokenValid = useCallback((): boolean => {
     if (!streamToken) return false
     
     const now = Date.now()
     const expiresAt = streamToken.fetchedAt + (streamToken.expiresIn * 1000)
-    return expiresAt - now > TOKEN_VALIDITY_MARGIN
+    return expiresAt - now > URL_VALIDITY_MARGIN
   }, [streamToken])
 
-  // Build stream URL from token
-  const streamUrl = streamToken && currentAssetId.current
-    ? `${API_URL}/stream/${currentAssetId.current}?token=${streamToken.token}`
-    : null
+  // Stream URL is now the direct Supabase signed URL
+  const streamUrl = streamToken?.url || null
 
-  // Fetch new stream token - with deduplication
+  // Fetch signed URL from new endpoint
   const fetchStreamToken = useCallback(async (assetId: string): Promise<string | null> => {
     // Prevent concurrent fetches
     if (isFetching.current) {
-      console.log('[StreamToken] Already fetching, skipping...')
+      console.log('[StreamAccess] Already fetching, skipping...')
       return null
     }
 
@@ -67,9 +65,10 @@ export const useStreamToken = (
     setError(null)
 
     try {
-      console.log('[StreamToken] Fetching token for:', assetId)
+      console.log('[StreamAccess] Fetching signed URL for:', assetId)
       
-      const res = await fetch(`${API_URL}/stream/access-check/${assetId}`, {
+      // NEW API: /stream/access/:assetId (returns signed URL directly)
+      const res = await fetch(`${API_URL}/stream/access/${assetId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,33 +78,33 @@ export const useStreamToken = (
 
       if (!res.ok) {
         const data = await res.json()
-        throw new Error(data.error || 'Failed to get stream token')
+        throw new Error(data.error || 'Failed to get stream access')
       }
 
       const data = await res.json()
       
-      if (!data.success || !data.streamToken) {
-        throw new Error(data.error || 'No stream token received')
+      if (!data.success || !data.url) {
+        throw new Error(data.error || 'No signed URL received')
       }
 
-      const token: StreamToken = {
-        token: data.streamToken,
-        expiresIn: data.expiresIn || 120,
+      const signedUrlData: SignedUrlData = {
+        url: data.url, // Direct Supabase signed URL
+        expiresIn: data.expiresIn || 300, // 5 minutes default
         mediaType: data.mediaType,
         mimeType: data.mimeType,
         fetchedAt: Date.now()
       }
 
-      console.log('[StreamToken] Got token, expires in:', token.expiresIn, 'seconds')
+      console.log('[StreamAccess] Got signed URL, expires in:', signedUrlData.expiresIn, 'seconds')
       
-      setStreamToken(token)
+      setStreamToken(signedUrlData)
       currentAssetId.current = assetId
 
-      // NO auto-refresh - user triggers refresh on seeking if needed
-      return `${API_URL}/stream/${assetId}?token=${token.token}`
+      // Return the direct Supabase URL (no proxy needed!)
+      return signedUrlData.url
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Stream token error'
-      console.error('[StreamToken] Error:', errorMessage)
+      const errorMessage = err instanceof Error ? err.message : 'Stream access error'
+      console.error('[StreamAccess] Error:', errorMessage)
       setError(errorMessage)
       return null
     } finally {
@@ -114,18 +113,18 @@ export const useStreamToken = (
     }
   }, [getSessionHeader])
 
-  // Refresh current token - only when explicitly called
+  // Refresh signed URL - only when explicitly called
   const refreshToken = useCallback(async (): Promise<string | null> => {
     if (!currentAssetId.current) {
       setError('No asset to refresh')
       return null
     }
-    // Clear current token first to force re-fetch
+    // Clear current URL first to force re-fetch
     setStreamToken(null)
     return fetchStreamToken(currentAssetId.current)
   }, [fetchStreamToken])
 
-  // Clear token
+  // Clear token/URL
   const clearToken = useCallback(() => {
     setStreamToken(null)
     currentAssetId.current = null
