@@ -246,16 +246,31 @@ export const useWalletSession = (): UseWalletSessionResult => {
     setError(null)
   }, [session])
 
-  // Auto-refresh session and entitlements on mount
+  // Auto-refresh session and entitlements on mount - runs ONCE
   useEffect(() => {
-    if (session) {
-      refreshSession().then(valid => {
-        if (valid) {
-          fetchEntitlements()
-        }
+    const currentSession = loadSession() // Read from localStorage directly
+    if (currentSession) {
+      // Verify session is still valid on server
+      fetch(`${API_URL}/wallet/session`, {
+        headers: { 'X-Wallet-Session': currentSession.sessionToken }
       })
+        .then(res => res.ok ? res.json() : Promise.reject())
+        .then(data => {
+          if (data.authenticated) {
+            // Session valid, fetch entitlements
+            fetchEntitlementsInternal(currentSession.sessionToken)
+          } else {
+            // Session invalid, clear it
+            setSession(null)
+            saveSession(null)
+            setEntitlements([])
+          }
+        })
+        .catch(() => {
+          // Error checking session - keep local state
+        })
     }
-  }, []) // Only on mount
+  }, []) // Empty deps = mount only, no external dependencies needed
 
   // Clear session if wallet address changes externally
   const clearSessionForWallet = useCallback((newWalletAddress: string | null) => {

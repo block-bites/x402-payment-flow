@@ -60,21 +60,6 @@ export const WalletSessionProvider: React.FC<WalletSessionProviderProps> = ({
     }
   }, [walletAddress, session, logout])
 
-  // Auto-authenticate when wallet connects (if not already authenticated)
-  useEffect(() => {
-    if (walletAddress && !isAuthenticated && !isAuthenticating) {
-      // Check if we have a saved session for this wallet
-      const savedSession = session
-      if (savedSession && savedSession.walletAddress.toLowerCase() === walletAddress.toLowerCase()) {
-        // Already have valid session
-        return
-      }
-      
-      // Don't auto-authenticate - let user trigger it
-      // This is more secure and gives user control
-    }
-  }, [walletAddress, isAuthenticated, isAuthenticating, session])
-
   const value: WalletSessionContextValue = {
     session,
     isAuthenticated,
