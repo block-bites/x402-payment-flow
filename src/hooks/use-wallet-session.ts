@@ -20,6 +20,7 @@ export interface UseWalletSessionResult {
   session: WalletSession | null
   isAuthenticated: boolean
   isAuthenticating: boolean
+  isVerifyingSession: boolean // True when verifying existing session on mount
   entitlements: Entitlement[]
   error: string | null
   
@@ -65,6 +66,7 @@ const saveSession = (session: WalletSession | null) => {
 export const useWalletSession = (): UseWalletSessionResult => {
   const [session, setSession] = useState<WalletSession | null>(loadSession)
   const [isAuthenticating, setIsAuthenticating] = useState(false)
+  const [isVerifyingSession, setIsVerifyingSession] = useState(false)
   const [entitlements, setEntitlements] = useState<Entitlement[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -253,6 +255,8 @@ export const useWalletSession = (): UseWalletSessionResult => {
   useEffect(() => {
     const currentSession = loadSession() // Read from localStorage directly
     if (currentSession) {
+      setIsVerifyingSession(true)
+      console.log('[Session] Verifying existing session from localStorage...')
       // Verify session is still valid on server
       fetch(`${API_URL}/wallet/session`, {
         headers: { 'X-Wallet-Session': currentSession.sessionToken }
@@ -264,6 +268,7 @@ export const useWalletSession = (): UseWalletSessionResult => {
             setSession(null)
             saveSession(null)
             setEntitlements([])
+            setIsVerifyingSession(false)
             return null
           }
           return res.json()
@@ -274,6 +279,7 @@ export const useWalletSession = (): UseWalletSessionResult => {
           if (data.authenticated) {
             // Session valid, fetch entitlements
             console.log('[Session] Session valid, fetching entitlements...')
+            setSession(currentSession) // Ensure session is set in state
             fetchEntitlementsInternal(currentSession.sessionToken)
           } else {
             // Session invalid according to server
@@ -282,14 +288,16 @@ export const useWalletSession = (): UseWalletSessionResult => {
             saveSession(null)
             setEntitlements([])
           }
+          setIsVerifyingSession(false)
         })
         .catch((err) => {
-          // Network error - clear session to be safe
+          // Network error - keep session but mark verification as done
           console.error('[Session] Error verifying session:', err)
-          setSession(null)
-          saveSession(null)
-          setEntitlements([])
+          // Don't clear session on network error - might be temporary
+          setIsVerifyingSession(false)
         })
+    } else {
+      setIsVerifyingSession(false)
     }
   }, []) // Empty deps = mount only
 
@@ -307,6 +315,7 @@ export const useWalletSession = (): UseWalletSessionResult => {
     session,
     isAuthenticated,
     isAuthenticating,
+    isVerifyingSession,
     entitlements,
     error,
     authenticate,

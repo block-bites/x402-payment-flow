@@ -34,6 +34,7 @@ function App() {
   const {
     isAuthenticated,
     isAuthenticating,
+    isVerifyingSession,
     authenticate,
     logout: sessionLogout,
     fetchEntitlements,
@@ -135,11 +136,17 @@ function App() {
 
   // Auto-authenticate when wallet is connected but not authenticated
   // This runs immediately when walletAddress changes (after connect or reconnect)
+  // BUT: Don't authenticate if we're verifying an existing session (to avoid duplicate sign requests)
   useEffect(() => {
     const walletChanged = previousWalletAddress.current !== walletAddress
     const walletJustConnected = walletChanged && walletAddress !== null && previousWalletAddress.current === null
     
-    if (walletJustConnected || (walletAddress && !isAuthenticated && !isAuthenticating && serverStatus.online)) {
+    // Don't auto-authenticate if:
+    // 1. We're already authenticated
+    // 2. We're currently authenticating
+    // 3. We're verifying an existing session (to avoid duplicate sign requests on page refresh)
+    // 4. Server is offline
+    if (walletJustConnected || (walletAddress && !isAuthenticated && !isAuthenticating && !isVerifyingSession && serverStatus.online)) {
       console.log('[App] Wallet connected, auto-authenticating...', walletAddress, 'walletJustConnected:', walletJustConnected)
       let cancelled = false
       
@@ -173,7 +180,7 @@ function App() {
       // Update ref even if we don't authenticate (e.g., wallet disconnected)
       previousWalletAddress.current = walletAddress
     }
-  }, [walletAddress, isAuthenticated, isAuthenticating, authenticate, serverStatus.online, fetchMediaList])
+  }, [walletAddress, isAuthenticated, isAuthenticating, isVerifyingSession, authenticate, serverStatus.online, fetchMediaList])
 
   // Refresh media list when session changes (connect/disconnect) or after authentication
   useEffect(() => {
@@ -190,6 +197,18 @@ function App() {
       fetchMediaList()
     }
   }, [isAuthenticated, fetchMediaList, serverStatus.online])
+
+  // Refresh media list after session verification completes (on page refresh)
+  useEffect(() => {
+    if (serverStatus.online && !isVerifyingSession && isAuthenticated) {
+      console.log('[App] Session verification completed, refreshing media list...')
+      // Small delay to ensure everything is ready
+      const timeoutId = setTimeout(() => {
+        fetchMediaList()
+      }, 100)
+      return () => clearTimeout(timeoutId)
+    }
+  }, [isVerifyingSession, isAuthenticated, fetchMediaList, serverStatus.online])
 
   // Handle wallet connect - authentication will happen automatically via useEffect
   const handleConnect = async () => {
