@@ -135,7 +135,8 @@ function App() {
           const data = await response.json()
           const network = data?.payment?.network || data?.network || null
           setServerStatus({ online: true, network })
-          fetchMediaList(true) // Immediate fetch on initial server check
+          // Don't fetch media list here - wait for session verification to complete
+          // This prevents duplicate fetches on page load
         } else {
           setServerStatus({ online: false, network: null })
         }
@@ -210,23 +211,47 @@ function App() {
     }
   }, [walletAddress, isAuthenticated, isAuthenticating, isVerifyingSession, authenticate, serverStatus.online, fetchMediaList])
 
-  // Refresh media list when session changes (connect/disconnect) or after authentication
-  // Combined with verification check to avoid duplicate fetches
+  // Track if we've done initial fetch after mount/verification
+  const hasFetchedAfterMountRef = useRef(false)
+  const previousIsVerifyingRef = useRef<boolean | undefined>(undefined)
+  
+  // Refresh media list when session verification completes (on page refresh)
+  // This is the PRIMARY place to fetch after page load
   useEffect(() => {
-    if (!serverStatus.online) return
-
-    // Only fetch if:
-    // 1. Session verification is complete (not verifying)
-    // 2. We have a clear authenticated state
-    if (!isVerifyingSession) {
-      if (isAuthenticated) {
-        console.log('[App] Session authenticated, refreshing media list. isAuthenticated:', isAuthenticated)
-      } else {
-        console.log('[App] Session disconnected, refreshing media list without header')
+    // Detect when verification just completed (transition from true to false)
+    const verificationJustCompleted = previousIsVerifyingRef.current === true && isVerifyingSession === false
+    
+    if (serverStatus.online && !isVerifyingSession) {
+      if (!hasFetchedAfterMountRef.current || verificationJustCompleted) {
+        console.log('[App] Fetching media list after verification completes...', {
+          hasFetchedAfterMount: hasFetchedAfterMountRef.current,
+          verificationJustCompleted
+        })
+        hasFetchedAfterMountRef.current = true
+        // Debounced fetch - will combine multiple rapid changes
+        fetchMediaList()
       }
-      // Debounced fetch - will combine multiple rapid changes
-      fetchMediaList()
     }
+    
+    previousIsVerifyingRef.current = isVerifyingSession
+  }, [isVerifyingSession, serverStatus.online, fetchMediaList])
+
+  // Refresh media list when session state changes AFTER initial mount
+  // (e.g., user connects/disconnects wallet, not on page refresh)
+  useEffect(() => {
+    // Skip initial mount - only react to changes after mount
+    if (!serverStatus.online || isVerifyingSession || !hasFetchedAfterMountRef.current) {
+      return
+    }
+
+    // Only fetch if session state changed AFTER initial mount
+    if (isAuthenticated) {
+      console.log('[App] Session authenticated (after mount), refreshing media list...')
+    } else {
+      console.log('[App] Session disconnected (after mount), refreshing media list without header')
+    }
+    // Debounced fetch - will combine multiple rapid changes
+    fetchMediaList()
   }, [isAuthenticated, isVerifyingSession, fetchMediaList, serverStatus.online])
 
   // Handle wallet connect - authentication will happen automatically via useEffect
