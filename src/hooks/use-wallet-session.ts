@@ -249,7 +249,7 @@ export const useWalletSession = (): UseWalletSessionResult => {
     setError(null)
   }, [session])
 
-  // Auto-refresh session and entitlements on mount - runs ONCE
+  // Verify session on mount - runs ONCE
   useEffect(() => {
     const currentSession = loadSession() // Read from localStorage directly
     if (currentSession) {
@@ -257,23 +257,41 @@ export const useWalletSession = (): UseWalletSessionResult => {
       fetch(`${API_URL}/wallet/session`, {
         headers: { 'X-Wallet-Session': currentSession.sessionToken }
       })
-        .then(res => res.ok ? res.json() : Promise.reject())
+        .then(res => {
+          if (!res.ok) {
+            // Server rejected session (401, 403, etc.) - clear it
+            console.log('[Session] Server rejected session, clearing...')
+            setSession(null)
+            saveSession(null)
+            setEntitlements([])
+            return null
+          }
+          return res.json()
+        })
         .then(data => {
+          if (!data) return // Already handled error case
+          
           if (data.authenticated) {
             // Session valid, fetch entitlements
+            console.log('[Session] Session valid, fetching entitlements...')
             fetchEntitlementsInternal(currentSession.sessionToken)
           } else {
-            // Session invalid, clear it
+            // Session invalid according to server
+            console.log('[Session] Session invalid, clearing...')
             setSession(null)
             saveSession(null)
             setEntitlements([])
           }
         })
-        .catch(() => {
-          // Error checking session - keep local state
+        .catch((err) => {
+          // Network error - clear session to be safe
+          console.error('[Session] Error verifying session:', err)
+          setSession(null)
+          saveSession(null)
+          setEntitlements([])
         })
     }
-  }, []) // Empty deps = mount only, no external dependencies needed
+  }, []) // Empty deps = mount only
 
   // Clear session if wallet address changes externally
   const clearSessionForWallet = useCallback((newWalletAddress: string | null) => {
